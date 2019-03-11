@@ -1,3 +1,21 @@
+import dateparser
+import csv
+import os
+import pystache
+import pytz
+import requests
+import time
+
+from datetime import datetime, timedelta, date
+from dateutil.relativedelta import relativedelta
+from jinja2 import Template
+from mailchimp3 import MailChimp
+
+from commands.slackclient import CustomSlackClient
+
+
+
+
 # See: https://github.com/jonathandion/awesome-emails#templates
 #
 # 1. Get the CSV of pitch dataset, and filter for past month.
@@ -21,16 +39,6 @@
 #      POST /campaigns/{campaign_id}/actions/schedule
 #
 # 1. Notify slack of the scheduled campaign with archive_url to preview.
-
-from datetime import datetime, timedelta
-from jinja2 import Template
-from mailchimp3 import MailChimp
-import os
-import pystache
-import pytz
-
-from commands.slackclient import CustomSlackClient
-
 
 def str2bool(v):
   return v.lower() in ("yes", "true", "t", "1")
@@ -75,7 +83,22 @@ projects = get_project_data()
 
 mc_client = MailChimp(mc_api=MAILCHIMP_API_KEY, mc_user=MAILCHIMP_API_USER)
 
-template = mc_client.templates.default_content.all(template_id=MAILCHIMP_TEMPLATE_ID)
+class ProjectUpdateEmail(object):
+    client = None
+    template_id = None
+    template = None
+
+    def __init__(self, mailchimp_client):
+        self.client = mailchimp_client
+
+    def _get_template(self):
+        self.template = self.client.templates.default_content.all(template_id=MAILCHIMP_TEMPLATE_ID)
+        return self.template
+
+
+email = ProjectUpdateEmail(mc_client)
+email.template_id = MAILCHIMP_TEMPLATE_ID
+template = email._get_template()
 
 sections_data = template['sections']
 
@@ -108,6 +131,57 @@ template = """
 """
 
 template = Template(template.strip())
+
+from commands.utils.trello import BreakoutGroup
+
+class BreakoutGroup(object):
+    trello_card_id = str()
+    trello_card = None
+    name = str()
+    pitches = []
+    pitch_count = 0
+
+class BreakoutGroupPitch(object):
+    name = str()
+
+class BreakoutGroupsProcessor(object):
+    NONCE = int(time.time())
+
+    months_ago = 0
+    csv_url = str()
+    groups = []
+    pitches = []
+
+    def __init__(self):
+        self.csv_url = 'https://raw.githubusercontent.com/CivicTechTO/dataset-civictechto-breakout-groups/master/data/civictechto-breakout-groups.csv?r={}'.format(self.NONCE)
+        self._load_pitches_from_url()
+        self._process()
+
+    def _load_pitches_from_url(self):
+        r = requests.get(self.csv_url)
+        csv_content = r.content.decode('utf-8')
+        csv_content = csv_content.split('\r\n')
+        reader = csv.DictReader(csv_content, delimiter=',')
+        # TODO: Ensure these are sorted by date in reverse chronological order.
+        self.pitches = list(reader)[::-1]
+
+    def _process(self):
+        pass
+
+    def get_recent(self):
+        for p in self.pitches:
+            date = dateparser.parse(p['date'])
+            d = datetime.utcnow() - relativedelta(months=self.months_ago)
+            month_start = datetime(d.year, d.month, 1)
+            month_end = datetime(d.year, d.month+1, 1)
+            if (month_start <= date) and (date < month_end):
+                group = BreakoutGroup()
+                print(p)
+
+processor = BreakoutGroupsProcessor()
+processor.months_ago = 8
+processor.get_recent()
+raise
 
 context = {
         'learning_groups': [p for p in projects if 'learning group' in p['tags']],
