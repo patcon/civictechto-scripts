@@ -1,8 +1,10 @@
 import dateparser
 import csv
+import itertools
 import os
 import pystache
 import pytz
+import re
 import requests
 import time
 
@@ -10,10 +12,13 @@ from datetime import datetime, timedelta, date
 from dateutil.relativedelta import relativedelta
 from jinja2 import Template
 from mailchimp3 import MailChimp
+from trello import TrelloClient
 
 from commands.slackclient import CustomSlackClient
 
 
+TRELLO_APP_KEY = os.getenv('TRELLO_APP_KEY')
+TRELLO_SECRET = os.getenv('TRELLO_SECRET')
 
 
 # See: https://github.com/jonathandion/awesome-emails#templates
@@ -135,14 +140,77 @@ template = Template(template.strip())
 from commands.utils.trello import BreakoutGroup
 
 class BreakoutGroup(object):
-    trello_card_id = str()
-    trello_card = None
+    CHAT_RE = re.compile('^(?:slack|chat): (\S+)$', flags=re.IGNORECASE)
+    PITCHER_RE = re.compile('pitchers?:? ?(.+)', flags=re.IGNORECASE)
+
+    card = None
     name = str()
+    chat_room = str()
+    pitcher = str()
     pitches = []
     pitch_count = 0
+    streak_count = 0
+    is_new = False
+    # If no record, assume very old.
+    last_pitch_date = datetime(2016, 8, 1)
 
-class BreakoutGroupPitch(object):
-    name = str()
+    def __init__(self, card):
+        self.card = card
+        self.generate_from_trello_card()
+
+    def generate_from_trello_card(self):
+        self.name = self.card.name
+        self.chat_room = self._get_chat_room()
+        self.pitcher = self._get_pitcher()
+
+    def process_pitches(self, pitches):
+        # Tally pitch count.
+        self.pitch_count = 0
+        self.pitches = []
+        for row in pitches:
+            if row['trello_card_id'] == self.card.id:
+                self.pitches.append(row)
+                self.pitch_count += 1
+
+        if self.pitch_count == 0:
+            self.is_new = True
+
+        # Get last pitch date.
+        for row in pitches:
+            if row['trello_card_id'] == self.card.id:
+                self.last_pitch_date = datetime.strptime(row['date'], '%Y-%m-%d')
+                break
+
+        # Tally streak count.
+        self.streak_count = 0
+        for key, group in itertools.groupby(pitches, key=lambda r: r['date']):
+            matches = [p for p in group if p['trello_card_id'] == self.card.id]
+            if matches:
+                self.streak_count += 1
+                continue
+            else:
+                break
+
+    def _get_chat_room(self):
+        attachments = self.card.get_attachments()
+        for a in attachments:
+            match = self.CHAT_RE.match(a.name)
+            if match:
+                return match.group(1)
+
+        return ''
+
+    def _get_pitcher(self):
+        comments = self.card.get_comments()
+        comments.reverse()
+        # Get most recent pitcher
+        # TODO: Check whether comment made in past week.
+        for c in comments:
+            match = self.PITCHER_RE.match(c['data']['text'])
+            if match:
+                return match.group(1)
+
+        return ''
 
 class BreakoutGroupsProcessor(object):
     NONCE = int(time.time())
@@ -152,10 +220,22 @@ class BreakoutGroupsProcessor(object):
     groups = []
     pitches = []
 
+    trello = None
+    board_id = 'EVvNEGK5'
+
     def __init__(self):
+        self.trello = TrelloClient(api_key=TRELLO_APP_KEY, api_secret=TRELLO_SECRET)
         self.csv_url = 'https://raw.githubusercontent.com/CivicTechTO/dataset-civictechto-breakout-groups/master/data/civictechto-breakout-groups.csv?r={}'.format(self.NONCE)
         self._load_pitches_from_url()
-        self._process()
+
+    def populate_groups_from_trello(self):
+        board = self.trello.get_board(self.board_id)
+        cards = board.get_cards({'filter': 'open'})
+        for c in cards:
+            print(c.name)
+            g = BreakoutGroup(c)
+            g.process_pitches(self.pitches)
+            self.groups.append(g)
 
     def _load_pitches_from_url(self):
         r = requests.get(self.csv_url)
@@ -165,22 +245,37 @@ class BreakoutGroupsProcessor(object):
         # TODO: Ensure these are sorted by date in reverse chronological order.
         self.pitches = list(reader)[::-1]
 
-    def _process(self):
-        pass
+    def get_group_by_id(self, trello_id):
+        matches = [g for g in self.groups if g.card.id == trello_id]
+        if matches:
+            return matches.pop()
+        else:
+            None
 
-    def get_recent(self):
+    def get_group_by_name(self, name):
+        matches = [g for g in self.groups if g.card.name.lower() == name.lower()]
+        if matches:
+            return matches.pop()
+        else:
+            None
+
+    def get_month_pitches(self):
+        pitches = []
         for p in self.pitches:
             date = dateparser.parse(p['date'])
             d = datetime.utcnow() - relativedelta(months=self.months_ago)
             month_start = datetime(d.year, d.month, 1)
             month_end = datetime(d.year, d.month+1, 1)
+            days = (month_start + timedelta(days=i) for i in range((month_end - month_start).days + 1))
             if (month_start <= date) and (date < month_end):
-                group = BreakoutGroup()
-                print(p)
+                pitches.append(p)
+
+        return pitches
 
 processor = BreakoutGroupsProcessor()
+processor.populate_groups_from_trello()
+print(vars(processor.get_group_by_name('Toronto Meshnet')))
 processor.months_ago = 8
-processor.get_recent()
 raise
 
 context = {
