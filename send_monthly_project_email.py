@@ -246,11 +246,12 @@ class BreakoutGroupsProcessor(object):
     def populate_groups_from_trello(self):
         board = self.trello.get_board(self.board_id)
         cards = board.get_cards({'filter': 'visible'})
-        for c in cards:
-            print(c.name)
+        for i, c in enumerate(cards):
+            print('Processing Trello card {}/{}'.format(i+1, len(cards)), end='\r', flush=True)
             g = BreakoutGroup(c)
             g.process_pitches(self.pitches)
             self.groups.append(g)
+        print('')
 
     def _load_pitches_from_url(self):
         r = requests.get(self.csv_url)
@@ -360,7 +361,7 @@ july_groups = processor.get_groups_over_month()
 
 renderer = EmailRenderer()
 renderer.active_groups = july_groups
-print('-- JULY')
+print('-- JULY 2018')
 renderer.render()
 
 raise
