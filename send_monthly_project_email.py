@@ -1,7 +1,9 @@
 import dateparser
 import csv
+import emoji
 import itertools
 import os
+import pprint
 import pystache
 import pytz
 import re
@@ -142,6 +144,9 @@ from commands.utils.trello import BreakoutGroup
 class BreakoutGroup(object):
     CHAT_RE = re.compile('^(?:slack|chat): (\S+)$', flags=re.IGNORECASE)
     PITCHER_RE = re.compile('pitchers?:? ?(.+)', flags=re.IGNORECASE)
+    CONTRIBUTE_LINK_RE = re.compile('contribute', flags=re.IGNORECASE)
+    SECONDARY_LINK_RE = re.compile('secondary link:', flags=re.IGNORECASE)
+    ANY_LINK_RE = re.compile('.* link:', flags=re.IGNORECASE)
 
     card = None
     name = str()
@@ -162,6 +167,7 @@ class BreakoutGroup(object):
         self.name = self.card.name
         self.chat_room = self._get_chat_room()
         self.pitcher = self._get_pitcher()
+        self.link = self._get_link()
 
     def process_pitches(self, pitches):
         # Tally pitch count.
@@ -200,6 +206,15 @@ class BreakoutGroup(object):
 
         return ''
 
+    def _get_link(self):
+        attachments = self.card.get_attachments()
+        for pattern in [self.CONTRIBUTE_LINK_RE, self.SECONDARY_LINK_RE, self.ANY_LINK_RE]:
+            for a in attachments:
+                if pattern.match(a.name):
+                    return a.url
+
+        return ''
+
     def _get_pitcher(self):
         comments = self.card.get_comments()
         comments.reverse()
@@ -216,7 +231,7 @@ class BreakoutGroupsProcessor(object):
     NONCE = int(time.time())
 
     months_ago = 0
-    csv_url = str()
+    csv_url = 'https://raw.githubusercontent.com/CivicTechTO/dataset-civictechto-breakout-groups/master/data/civictechto-breakout-groups.csv?r={}'.format(NONCE)
     groups = []
     pitches = []
 
@@ -225,12 +240,11 @@ class BreakoutGroupsProcessor(object):
 
     def __init__(self):
         self.trello = TrelloClient(api_key=TRELLO_APP_KEY, api_secret=TRELLO_SECRET)
-        self.csv_url = 'https://raw.githubusercontent.com/CivicTechTO/dataset-civictechto-breakout-groups/master/data/civictechto-breakout-groups.csv?r={}'.format(self.NONCE)
         self._load_pitches_from_url()
 
     def populate_groups_from_trello(self):
         board = self.trello.get_board(self.board_id)
-        cards = board.get_cards({'filter': 'open'})
+        cards = board.get_cards({'filter': 'visible'})
         for c in cards:
             print(c.name)
             g = BreakoutGroup(c)
@@ -259,29 +273,97 @@ class BreakoutGroupsProcessor(object):
         else:
             None
 
-    def get_month_pitches(self):
-        pitches = []
-        for p in self.pitches:
-            date = dateparser.parse(p['date'])
-            d = datetime.utcnow() - relativedelta(months=self.months_ago)
-            month_start = datetime(d.year, d.month, 1)
-            month_end = datetime(d.year, d.month+1, 1)
-            days = (month_start + timedelta(days=i) for i in range((month_end - month_start).days + 1))
-            if (month_start <= date) and (date < month_end):
-                pitches.append(p)
+    def get_groups_over_month(self):
+        d = datetime.utcnow() - relativedelta(months=self.months_ago)
+        month_start = datetime(d.year, d.month, 1)
+        month_end = datetime(d.year, d.month+1, 1)
+        return self.get_groups_over_range(month_start, month_end)
 
-        return pitches
+    def get_groups_over_range(self, start_date, end_date):
+        for g in self.groups:
+            for p in g.pitches:
+                date = dateparser.parse(p['date'])
+                #days = (month_start + timedelta(days=i) for i in range((month_end - month_start).days + 1))
+                if start_date <= date < end_date:
+                    yield g
+                    break
+
 
 processor = BreakoutGroupsProcessor()
 processor.populate_groups_from_trello()
-print(vars(processor.get_group_by_name('Toronto Meshnet')))
-processor.months_ago = 8
-raise
+#sample_group = processor.get_group_by_name('Toronto Meshnet')
+#print(vars(sample_group))
+#pprint.pprint([vars(g) for g in july_groups])
+#print(len(list(july_groups)))
 
 context = {
         'learning_groups': [p for p in projects if 'learning group' in p['tags']],
         'working_groups': [p for p in projects if 'working group' in p['tags']],
         }
+
+class EmailRenderer(object):
+    EMOJI_PITCH = ':black_medium_square:'
+    EMOJI_NOPITCH = ':white_medium_square:'
+    EMOJI_STREAK = ':fire:'
+    EMOJI_NEW = ':hatching_chick:'
+    EMOJIS_COUNT = [':one:', ':two:', ':three:', ':four:', ':five:', ':six:', ':seven:', ':eight:', ':nine:', ':ten:', ':double_vertical_bar:']
+
+    year = 2018
+    month = 7
+    event_count = 0
+    active_groups = []
+    pitch_data = []
+
+    def __init__(self):
+        pass
+
+    def render(self):
+        self._render_header()
+        for g in self.active_groups:
+            emojis = self._render_emojis(g)
+            output = '{emojis} {name}'.format(emojis=emojis, name=g.name)
+            if g.link:
+                output = '{output} | [more...]({link})'.format(output=output, link=g.link)
+            print(output)
+
+    def _render_header(self):
+        events = self._get_event_dates()
+        output = " ".join(self.EMOJIS_COUNT[:len(events)-1])
+        output = emoji.emojize(output, use_aliases=True)
+        print(output)
+
+    def _render_emojis(self, group):
+        emojis = []
+        events = [True, False, True, False]
+        for e in events:
+            if e:
+                emojis.append(self.EMOJI_PITCH)
+            else:
+                emojis.append(self.EMOJI_NOPITCH)
+        emojis = " ".join(emojis)
+        emojis = emoji.emojize(emojis)
+        return emojis
+
+    def _get_event_dates(self):
+        return [
+            date(2018, 7, 3),
+            date(2018, 7, 10),
+            date(2018, 7, 17),
+            date(2018, 7, 24),
+            date(2018, 7, 31),
+        ]
+
+
+processor.months_ago = 8
+july_groups = processor.get_groups_over_month()
+
+renderer = EmailRenderer()
+renderer.active_groups = july_groups
+print('-- JULY')
+renderer.render()
+
+raise
+
 
 content = template.render(**context)
 

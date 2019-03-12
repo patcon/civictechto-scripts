@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "1553cf86d0a187d0fdf08dfe6dbbcf8f4a25dca76adc11fff166c829fccbe93c"
+            "sha256": "856e48e2626942abb094272387c03902ff7d9ac73567dd501b347c783b1a0d5c"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -71,6 +71,11 @@
                 "sha256:749f6cdcfbdc3f79258f8154bad43fced95adc632c337675d0385959895894bc"
             ],
             "version": "==1.2.5"
+        },
+        "emoji": {
+            "editable": true,
+            "git": "https://github.com/patcon/emoji.git",
+            "ref": "6c0c1dafaab22933a341d668f206b28b4b96f45a"
         },
         "google-api-python-client": {
             "hashes": [

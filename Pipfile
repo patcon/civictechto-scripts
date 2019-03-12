@@ -20,6 +20,7 @@ PyGithub = "*"
 anki-meetup-memorizer = {editable = true,ref = "master",git = "https://github.com/civictechto/anki-meetup-memorizer.git"}
 python-dateutil = "*"
 dateparser = "*"
+emoji = {editable = true,ref = "keycap-aliases",git = "https://github.com/patcon/emoji.git"}
 
 [dev-packages]
 
