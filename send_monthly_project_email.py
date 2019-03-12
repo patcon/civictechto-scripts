@@ -6,6 +6,7 @@ import os
 import pprint
 import pystache
 import pytz
+import random
 import re
 import requests
 import time
@@ -294,7 +295,6 @@ processor.populate_groups_from_trello()
 #sample_group = processor.get_group_by_name('Toronto Meshnet')
 #print(vars(sample_group))
 #pprint.pprint([vars(g) for g in july_groups])
-#print(len(list(july_groups)))
 
 context = {
         'learning_groups': [p for p in projects if 'learning group' in p['tags']],
@@ -325,18 +325,19 @@ class EmailRenderer(object):
             if g.link:
                 output = '{output} | [more...]({link})'.format(output=output, link=g.link)
             print(output)
+        self._render_header()
 
     def _render_header(self):
         events = self._get_event_dates()
-        output = " ".join(self.EMOJIS_COUNT[:len(events)-1])
+        output = " ".join(self.EMOJIS_COUNT[:len(events)])
         output = emoji.emojize(output, use_aliases=True)
         print(output)
 
     def _render_emojis(self, group):
         emojis = []
-        events = [True, False, True, False]
-        for e in events:
-            if e:
+        for d in self._get_event_dates():
+            match = [p for p in group.pitches if dateparser.parse(p['date']).date() == d]
+            if match:
                 emojis.append(self.EMOJI_PITCH)
             else:
                 emojis.append(self.EMOJI_NOPITCH)
