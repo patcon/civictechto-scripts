@@ -313,7 +313,6 @@ class EmailRenderer(object):
     month = 7
     event_count = 0
     active_groups = []
-    pitch_data = []
 
     def __init__(self):
         pass
@@ -336,12 +335,20 @@ class EmailRenderer(object):
 
     def _render_emojis(self, group):
         emojis = []
-        for d in self._get_event_dates():
+        dates = self._get_event_dates()
+        on_streak = True
+        # TODO: ensure rev chron order
+        for d in reversed(dates):
             match = [p for p in group.pitches if dateparser.parse(p['date']).date() == d]
             if match:
-                emojis.append(self.EMOJI_PITCH)
+                if on_streak:
+                    emojis.append(self.EMOJI_STREAK)
+                else:
+                    emojis.append(self.EMOJI_PITCH)
             else:
+                on_streak = False
                 emojis.append(self.EMOJI_NOPITCH)
+        emojis = reversed(emojis)
         emojis = " ".join(emojis)
         emojis = emoji.emojize(emojis)
         return emojis
